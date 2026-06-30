@@ -24,13 +24,13 @@ This server exposes the [zbMath Open REST API](https://api.zbmath.org/v1/) as [M
 ### Using uv (recommended)
 
 ```bash
-uv tool install zbmath-mcp
+uv tool install --from git+https://github.com/iwaokimura/zbmath-mcp.git zbmath-mcp
 ```
 
 ### Using pip
 
 ```bash
-pip install zbmath-mcp
+pip install git+https://github.com/iwaokimura/zbmath-mcp.git
 ```
 
 ### From source
