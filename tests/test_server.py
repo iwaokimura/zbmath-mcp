@@ -114,7 +114,7 @@ class TestSearchDocuments:
             await search_documents("test query", results_per_page=5, page=2)
 
         call_kwargs = mock_client.get.call_args
-        assert "https://api.zbmath.org/v1/document/_search" in call_kwargs[0][0]
+        assert call_kwargs[0][0] == "https://api.zbmath.org/v1/document/_search"
         params = call_kwargs[1]["params"]
         assert params["search_string"] == "test query"
         assert params["results_per_page"] == 5
