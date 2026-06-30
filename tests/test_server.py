@@ -66,7 +66,7 @@ MOCK_SOFTWARE_RESPONSE = {
 # Patch helper
 # ---------------------------------------------------------------------------
 
-def _make_mock_response(data: dict) -> MagicMock:
+def _make_mock_http_response(data: dict) -> MagicMock:
     mock = MagicMock()
     mock.raise_for_status = MagicMock()
     mock.json = MagicMock(return_value=data)
@@ -82,7 +82,7 @@ class TestSearchDocuments:
     async def test_returns_documents(self):
         from server import search_documents
 
-        mock_response = _make_mock_response(MOCK_SEARCH_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_SEARCH_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -98,13 +98,13 @@ class TestSearchDocuments:
         assert data["documents"][0]["title"] == "On the Riemann hypothesis"
         assert data["documents"][0]["authors"] == ["Doe, John"]
         assert data["documents"][0]["msc_codes"] == ["11M26"]
-        assert "zbmath.org" in data["documents"][0]["url"]
+        assert data["documents"][0]["url"].startswith("https://zbmath.org/?q=an:")
 
     @pytest.mark.asyncio
     async def test_correct_api_params(self):
         from server import search_documents
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -124,7 +124,7 @@ class TestSearchDocuments:
     async def test_clamps_results_per_page(self):
         from server import search_documents
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -140,7 +140,7 @@ class TestSearchDocuments:
     async def test_empty_results(self):
         from server import search_documents
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -157,7 +157,7 @@ class TestSearchDocuments:
     async def test_second_doc_missing_review(self):
         from server import search_documents
 
-        mock_response = _make_mock_response(MOCK_SEARCH_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_SEARCH_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -179,7 +179,7 @@ class TestGetDocument:
     async def test_returns_document(self):
         from server import get_document
 
-        mock_response = _make_mock_response(MOCK_DOCUMENT_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_DOCUMENT_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -196,7 +196,7 @@ class TestGetDocument:
     async def test_calls_correct_url(self):
         from server import get_document
 
-        mock_response = _make_mock_response(MOCK_DOCUMENT_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_DOCUMENT_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -218,7 +218,7 @@ class TestStructuredSearch:
     async def test_sends_author_param(self):
         from server import structured_search
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -234,7 +234,7 @@ class TestStructuredSearch:
     async def test_sends_msc_param(self):
         from server import structured_search
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -250,7 +250,7 @@ class TestStructuredSearch:
     async def test_year_range_params(self):
         from server import structured_search
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -267,7 +267,7 @@ class TestStructuredSearch:
     async def test_omits_empty_params(self):
         from server import structured_search
 
-        mock_response = _make_mock_response({"status": {"nr_total_results": 0}, "result": []})
+        mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -294,7 +294,7 @@ class TestGetAuthor:
     async def test_returns_author(self):
         from server import get_author
 
-        mock_response = _make_mock_response(MOCK_AUTHOR_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_AUTHOR_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -311,7 +311,7 @@ class TestGetAuthor:
     async def test_calls_correct_url(self):
         from server import get_author
 
-        mock_response = _make_mock_response(MOCK_AUTHOR_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_AUTHOR_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -333,7 +333,7 @@ class TestGetSoftware:
     async def test_returns_software(self):
         from server import get_software
 
-        mock_response = _make_mock_response(MOCK_SOFTWARE_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_SOFTWARE_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
@@ -350,7 +350,7 @@ class TestGetSoftware:
     async def test_calls_correct_url(self):
         from server import get_software
 
-        mock_response = _make_mock_response(MOCK_SOFTWARE_RESPONSE)
+        mock_response = _make_mock_http_response(MOCK_SOFTWARE_RESPONSE)
         with patch("server.httpx.AsyncClient") as MockClient:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
