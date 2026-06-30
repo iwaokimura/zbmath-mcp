@@ -23,8 +23,10 @@ This server exposes the [zbMath Open REST API](https://api.zbmath.org/v1/) as [M
 
 ### Using uv (recommended)
 
+Installs a global `zbmath-mcp` command:
+
 ```bash
-uv tool install --from git+https://github.com/iwaokimura/zbmath-mcp.git zbmath-mcp
+uv tool install git+https://github.com/iwaokimura/zbmath-mcp.git
 ```
 
 ### Using pip
@@ -38,24 +40,30 @@ pip install git+https://github.com/iwaokimura/zbmath-mcp.git
 ```bash
 git clone https://github.com/iwaokimura/zbmath-mcp.git
 cd zbmath-mcp
-pip install .
+uv sync
 ```
+
+(With plain `pip` instead of `uv`, run `pip install -e .` in place of `uv sync`.)
 
 ## Usage
 
 ### Running the server
 
+If you installed it as a tool (uv) or with pip:
+
 ```bash
 zbmath-mcp
 ```
 
-Or directly with Python:
+From a source checkout:
 
 ```bash
-python server.py
+uv run zbmath-mcp
 ```
 
-The server communicates over **stdio** using the MCP protocol.
+The server communicates over **stdio** using the MCP protocol, so running it
+in a plain terminal just waits for a client to connect — that is expected.
+Normally an MCP client (see below) launches it for you.
 
 ### Connecting with Claude Desktop
 
@@ -71,14 +79,15 @@ Add the following to your `claude_desktop_config.json`:
 }
 ```
 
-Or if running from source:
+Or, to run from a source checkout without installing (replace the path with
+your clone location):
 
 ```json
 {
   "mcpServers": {
     "zbmath": {
-      "command": "python",
-      "args": ["/path/to/zbmath-mcp/server.py"]
+      "command": "uv",
+      "args": ["--directory", "/path/to/zbmath-mcp", "run", "zbmath-mcp"]
     }
   }
 }
@@ -86,8 +95,16 @@ Or if running from source:
 
 ### Connecting with Claude Code (CLI)
 
+If installed as a command:
+
 ```bash
 claude mcp add zbmath -- zbmath-mcp
+```
+
+Or from a source checkout (replace the path with your clone location):
+
+```bash
+claude mcp add zbmath -- uv --directory /path/to/zbmath-mcp run zbmath-mcp
 ```
 
 ## Example interactions
@@ -103,11 +120,10 @@ Once connected, you can ask an AI assistant:
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
+git clone https://github.com/iwaokimura/zbmath-mcp.git
+cd zbmath-mcp
+uv sync          # installs runtime + dev dependencies
+uv run pytest    # run the test suite
 ```
 
 ## License
