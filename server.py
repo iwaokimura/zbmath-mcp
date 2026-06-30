@@ -21,12 +21,79 @@ mcp = FastMCP(
 
 
 async def _get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Send a GET request to the zbMath API and return the parsed JSON."""
+    """Send a GET request to the zbMath API and return the parsed JSON.
+
+    The zbMath API answers a well-formed query that simply has no matches
+    with HTTP 404 and a body whose status reads "Zero results". We treat that
+    as an empty (not failed) response and return the body unchanged; any other
+    error status is raised.
+    """
     url = f"{ZBMATH_API_BASE}{path}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(url, params=params)
+        if response.status_code == 404:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            if isinstance(body, dict) and "status" in body:
+                return body
         response.raise_for_status()
         return response.json()
+
+
+# ---------------------------------------------------------------------------
+# Response parsing
+# ---------------------------------------------------------------------------
+
+
+def _summarize_document(doc: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a raw zbMath document record to a compact summary.
+
+    Maps the fields of the zbMath Open REST API response (verified against the
+    live API) to a flat, assistant-friendly shape.
+    """
+    title_field = doc.get("title") or {}
+    title = (
+        title_field.get("title", "")
+        if isinstance(title_field, dict)
+        else str(title_field)
+    )
+
+    contributors = doc.get("contributors") or {}
+    authors = [a.get("name", "") for a in contributors.get("authors", [])]
+
+    # The journal/series lives under source.series (a list); source.source is
+    # the human-readable bibliographic citation string.
+    source = doc.get("source") or {}
+    series = source.get("series") or []
+    journal = ""
+    if isinstance(series, list) and series:
+        journal = series[0].get("title", "")
+    elif isinstance(series, dict):
+        journal = series.get("title", "")
+
+    # MSC codes are a top-level "msc" list of {code, scheme, text} objects.
+    msc_codes = [m.get("code", "") for m in doc.get("msc") or []]
+
+    # "keywords" is a flat list of strings.
+    keywords = [k for k in doc.get("keywords") or [] if isinstance(k, str)]
+
+    reviews = doc.get("editorial_contributions") or []
+    review_text = reviews[0].get("text", "") if reviews else ""
+
+    return {
+        "zbmath_id": doc.get("id"),
+        "title": title,
+        "authors": authors,
+        "year": doc.get("year"),
+        "journal": journal,
+        "source": source.get("source", ""),
+        "msc_codes": msc_codes,
+        "keywords": keywords,
+        "review": review_text[:400] if review_text else "",
+        "url": doc.get("zbmath_url") or f"https://zbmath.org/{doc.get('id')}",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -63,46 +130,8 @@ async def search_documents(
         },
     )
 
-    total = data.get("status", {}).get("nr_total_results", 0)
-    documents = []
-    for doc in data.get("result", []):
-        title_field = doc.get("title", {})
-        title = (
-            title_field.get("title", "")
-            if isinstance(title_field, dict)
-            else str(title_field)
-        )
-        authors = [
-            a.get("name", "")
-            for a in doc.get("contributors", {}).get("authors", [])
-        ]
-        source = doc.get("source", {})
-        series = source.get("series", [])
-        journal = ""
-        if isinstance(series, list) and series:
-            journal = series[0].get("title", "")
-        elif isinstance(series, dict):
-            journal = series.get("title", "")
-
-        msc_codes = [
-            m.get("code", "")
-            for m in doc.get("keywords", {}).get("msc", [])
-        ]
-        reviews = doc.get("editorial_contributions", [])
-        review_text = reviews[0].get("text", "") if reviews else ""
-
-        documents.append(
-            {
-                "zbmath_id": doc.get("id"),
-                "title": title,
-                "authors": authors,
-                "year": doc.get("year"),
-                "journal": journal,
-                "msc_codes": msc_codes,
-                "review": review_text[:400] if review_text else "",
-                "url": f"https://zbmath.org/?q=an:{doc.get('id')}",
-            }
-        )
+    total = data.get("status", {}).get("nr_total_results") or 0
+    documents = [_summarize_document(doc) for doc in (data.get("result") or [])]
 
     return json.dumps(
         {"total_results": total, "page": page, "documents": documents},
@@ -124,7 +153,7 @@ async def get_document(zbmath_id: int) -> str:
         abstract, MSC classification, journal, DOI, review, and links.
     """
     data = await _get(f"/document/{zbmath_id}")
-    result = data.get("result", {})
+    result = data.get("result") or {}
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -145,13 +174,13 @@ async def structured_search(
     to specific fields such as author name, MSC subject class, or year range.
 
     Args:
-        author: Author name or zbMath author profile string (e.g. "euler.leonhard").
+        author: Author (contributor) name, e.g. "Euler" or "Riemann, B.".
         title: Words or phrases to match in the document title.
-        msc_code: MSC 2020 classification code prefix, e.g. "11" for
-                  Number Theory or "35J15" for a specific code.
+        msc_code: MSC 2020 classification code, e.g. "11" for Number Theory
+                  or "35J15" for a specific code.
         year_from: Earliest publication year (inclusive).
         year_to:   Latest publication year (inclusive).
-        journal: Journal or series name fragment.
+        journal: Journal / bibliographic source name fragment.
         results_per_page: Number of results (1–100, default 10).
         page: Zero-based page index for pagination (default 0).
 
@@ -159,52 +188,38 @@ async def structured_search(
         JSON string with total result count and matching documents.
     """
     results_per_page = max(1, min(results_per_page, 100))
+    # The zbMath structured-search endpoint uses human-readable field names
+    # (verified against the live API / OpenAPI spec), not short codes.
     params: dict[str, Any] = {
         "page": page,
         "results_per_page": results_per_page,
     }
     if author:
-        params["au"] = author
+        params["Contributor name"] = author
     if title:
-        params["ti"] = title
+        params["Title"] = title
     if msc_code:
-        params["cc"] = msc_code
-    if year_from is not None:
-        params["py_from"] = year_from
-    if year_to is not None:
-        params["py_to"] = year_to
+        params["MSC"] = msc_code
     if journal:
-        params["so"] = journal
+        params["Source"] = journal
+
+    # The "Year" field takes a single value or an interval "from-to";
+    # an open-ended interval is "from-" or "-to".
+    if year_from is not None and year_to is not None:
+        params["Year"] = (
+            str(year_from)
+            if year_from == year_to
+            else f"{year_from}-{year_to}"
+        )
+    elif year_from is not None:
+        params["Year"] = f"{year_from}-"
+    elif year_to is not None:
+        params["Year"] = f"-{year_to}"
 
     data = await _get("/document/_structured_search", params=params)
 
-    total = data.get("status", {}).get("nr_total_results", 0)
-    documents = []
-    for doc in data.get("result", []):
-        title_field = doc.get("title", {})
-        doc_title = (
-            title_field.get("title", "")
-            if isinstance(title_field, dict)
-            else str(title_field)
-        )
-        authors = [
-            a.get("name", "")
-            for a in doc.get("contributors", {}).get("authors", [])
-        ]
-        msc_codes = [
-            m.get("code", "")
-            for m in doc.get("keywords", {}).get("msc", [])
-        ]
-        documents.append(
-            {
-                "zbmath_id": doc.get("id"),
-                "title": doc_title,
-                "authors": authors,
-                "year": doc.get("year"),
-                "msc_codes": msc_codes,
-                "url": f"https://zbmath.org/?q=an:{doc.get('id')}",
-            }
-        )
+    total = data.get("status", {}).get("nr_total_results") or 0
+    documents = [_summarize_document(doc) for doc in (data.get("result") or [])]
 
     return json.dumps(
         {"total_results": total, "page": page, "documents": documents},
@@ -226,7 +241,7 @@ async def get_author(author_id: str) -> str:
         affiliated institutions, and publication count.
     """
     data = await _get(f"/author/{author_id}")
-    result = data.get("result", {})
+    result = data.get("result") or {}
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -242,7 +257,7 @@ async def get_software(software_id: int) -> str:
         programming language, keywords, and references.
     """
     data = await _get(f"/software/{software_id}")
-    result = data.get("result", {})
+    result = data.get("result") or {}
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 

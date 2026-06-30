@@ -12,6 +12,9 @@ import pytest
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
+# Shapes mirror the live zbMath Open REST API (verified 2026): "keywords" is a
+# flat list of strings, MSC codes live in a top-level "msc" list, the canonical
+# link is "zbmath_url", and "year" is a string.
 MOCK_SEARCH_RESPONSE = {
     "status": {"nr_total_results": 2},
     "result": [
@@ -19,21 +22,36 @@ MOCK_SEARCH_RESPONSE = {
             "id": 7192477,
             "title": {"title": "On the Riemann hypothesis"},
             "contributors": {"authors": [{"name": "Doe, John"}]},
-            "year": 2020,
-            "source": {"series": [{"title": "Annals of Mathematics"}]},
-            "keywords": {"msc": [{"code": "11M26"}]},
+            "year": "2020",
+            "source": {"series": [{"title": "Annals of Mathematics"}], "source": "Ann. Math. (2020)."},
+            "keywords": ["Riemann hypothesis", "zeta function"],
+            "msc": [{"code": "11M26", "scheme": "msc2020", "text": "Nonreal zeros"}],
             "editorial_contributions": [{"text": "A great paper."}],
+            "zbmath_url": "https://zbmath.org/7192477",
         },
         {
             "id": 1234567,
             "title": {"title": "Spectral theory"},
             "contributors": {"authors": [{"name": "Smith, Jane"}]},
-            "year": 2019,
+            "year": "2019",
             "source": {"series": []},
-            "keywords": {"msc": [{"code": "35P15"}]},
+            "keywords": [],
+            "msc": [{"code": "35P15", "scheme": "msc2020", "text": "Estimates of eigenvalues"}],
             "editorial_contributions": [],
+            "zbmath_url": "https://zbmath.org/1234567",
         },
     ],
+}
+
+# A well-formed query with no matches: the API replies HTTP 404 with this body.
+MOCK_ZERO_RESULTS_RESPONSE = {
+    "result": None,
+    "status": {
+        "execution": "Entry not found!",
+        "internal_code": "successful access. Zero results.",
+        "nr_total_results": None,
+        "status_code": 404,
+    },
 }
 
 MOCK_DOCUMENT_RESPONSE = {
@@ -66,8 +84,9 @@ MOCK_SOFTWARE_RESPONSE = {
 # Patch helper
 # ---------------------------------------------------------------------------
 
-def _make_mock_http_response(data: dict) -> MagicMock:
+def _make_mock_http_response(data: dict, status_code: int = 200) -> MagicMock:
     mock = MagicMock()
+    mock.status_code = status_code
     mock.raise_for_status = MagicMock()
     mock.json = MagicMock(return_value=data)
     return mock
@@ -98,7 +117,8 @@ class TestSearchDocuments:
         assert data["documents"][0]["title"] == "On the Riemann hypothesis"
         assert data["documents"][0]["authors"] == ["Doe, John"]
         assert data["documents"][0]["msc_codes"] == ["11M26"]
-        assert data["documents"][0]["url"].startswith("https://zbmath.org/?q=an:")
+        assert data["documents"][0]["keywords"] == ["Riemann hypothesis", "zeta function"]
+        assert data["documents"][0]["url"] == "https://zbmath.org/7192477"
 
     @pytest.mark.asyncio
     async def test_correct_api_params(self):
@@ -170,6 +190,28 @@ class TestSearchDocuments:
         assert data["documents"][1]["review"] == ""
 
 
+    @pytest.mark.asyncio
+    async def test_zero_results_404_is_not_an_error(self):
+        """A no-match query returns HTTP 404; it must yield an empty result,
+        not raise."""
+        from server import search_documents
+
+        mock_response = _make_mock_http_response(MOCK_ZERO_RESULTS_RESPONSE, status_code=404)
+        # raise_for_status would normally raise on 404; make sure it isn't reached.
+        mock_response.raise_for_status = MagicMock(side_effect=AssertionError("should not raise"))
+        with patch("server.httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await search_documents("zzzznomatchqueryzzzz")
+
+        data = json.loads(result)
+        assert data["total_results"] == 0
+        assert data["documents"] == []
+
+
 # ---------------------------------------------------------------------------
 # Tests for get_document
 # ---------------------------------------------------------------------------
@@ -225,10 +267,10 @@ class TestStructuredSearch:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            await structured_search(author="euler.leonhard")
+            await structured_search(author="Euler")
 
         params = mock_client.get.call_args[1]["params"]
-        assert params["au"] == "euler.leonhard"
+        assert params["Contributor name"] == "Euler"
 
     @pytest.mark.asyncio
     async def test_sends_msc_param(self):
@@ -244,7 +286,7 @@ class TestStructuredSearch:
             await structured_search(msc_code="11M26")
 
         params = mock_client.get.call_args[1]["params"]
-        assert params["cc"] == "11M26"
+        assert params["MSC"] == "11M26"
 
     @pytest.mark.asyncio
     async def test_year_range_params(self):
@@ -260,8 +302,28 @@ class TestStructuredSearch:
             await structured_search(year_from=2000, year_to=2010)
 
         params = mock_client.get.call_args[1]["params"]
-        assert params["py_from"] == 2000
-        assert params["py_to"] == 2010
+        assert params["Year"] == "2000-2010"
+
+    @pytest.mark.asyncio
+    async def test_open_ended_year_ranges(self):
+        from server import structured_search
+
+        for kwargs, expected in [
+            ({"year_from": 2000}, "2000-"),
+            ({"year_to": 2010}, "-2010"),
+            ({"year_from": 1999, "year_to": 1999}, "1999"),
+        ]:
+            mock_response = _make_mock_http_response({"status": {"nr_total_results": 0}, "result": []})
+            with patch("server.httpx.AsyncClient") as MockClient:
+                mock_client = AsyncMock()
+                mock_client.get = AsyncMock(return_value=mock_response)
+                MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                await structured_search(**kwargs)
+
+            params = mock_client.get.call_args[1]["params"]
+            assert params["Year"] == expected
 
     @pytest.mark.asyncio
     async def test_omits_empty_params(self):
@@ -277,12 +339,8 @@ class TestStructuredSearch:
             await structured_search()
 
         params = mock_client.get.call_args[1]["params"]
-        assert "au" not in params
-        assert "ti" not in params
-        assert "cc" not in params
-        assert "py_from" not in params
-        assert "py_to" not in params
-        assert "so" not in params
+        for key in ("Contributor name", "Title", "MSC", "Source", "Year"):
+            assert key not in params
 
 
 # ---------------------------------------------------------------------------
